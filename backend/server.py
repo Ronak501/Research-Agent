@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, HTTPException
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -6,67 +6,138 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List
+from typing import List, Optional
 import uuid
 from datetime import datetime, timezone
-
+from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
 app = FastAPI()
-
-# Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
-
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
+class Message(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
+    conversation_id: str
+    role: str
+    content: str
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
+class Conversation(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-# Add your routes to the router instead of directly to app
+class ConversationCreate(BaseModel):
+    title: str = "New Research"
+
+class MessageCreate(BaseModel):
+    conversation_id: str
+    content: str
+
+class MessageResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    user_message: Message
+    ai_message: Message
+
 @api_router.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"message": "Research Agent API"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
+@api_router.post("/chat/conversations", response_model=Conversation)
+async def create_conversation(input: ConversationCreate):
+    conversation = Conversation(title=input.title)
+    doc = conversation.model_dump()
+    doc['created_at'] = doc['created_at'].isoformat()
+    doc['updated_at'] = doc['updated_at'].isoformat()
+    await db.conversations.insert_one(doc)
+    return conversation
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
+@api_router.get("/chat/conversations", response_model=List[Conversation])
+async def get_conversations():
+    conversations = await db.conversations.find({}, {"_id": 0}).sort("updated_at", -1).to_list(100)
+    for conv in conversations:
+        if isinstance(conv['created_at'], str):
+            conv['created_at'] = datetime.fromisoformat(conv['created_at'])
+        if isinstance(conv['updated_at'], str):
+            conv['updated_at'] = datetime.fromisoformat(conv['updated_at'])
+    return conversations
 
-# Include the router in the main app
+@api_router.get("/chat/conversations/{conversation_id}", response_model=List[Message])
+async def get_conversation_messages(conversation_id: str):
+    messages = await db.messages.find(
+        {"conversation_id": conversation_id}, 
+        {"_id": 0}
+    ).sort("timestamp", 1).to_list(1000)
+    
+    for msg in messages:
+        if isinstance(msg['timestamp'], str):
+            msg['timestamp'] = datetime.fromisoformat(msg['timestamp'])
+    return messages
+
+@api_router.delete("/chat/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str):
+    await db.messages.delete_many({"conversation_id": conversation_id})
+    result = await db.conversations.delete_one({"id": conversation_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"message": "Conversation deleted"}
+
+@api_router.post("/chat/message", response_model=MessageResponse)
+async def send_message(input: MessageCreate):
+    user_message = Message(
+        conversation_id=input.conversation_id,
+        role="user",
+        content=input.content
+    )
+    
+    user_doc = user_message.model_dump()
+    user_doc['timestamp'] = user_doc['timestamp'].isoformat()
+    await db.messages.insert_one(user_doc)
+    
+    try:
+        chat = LlmChat(
+            api_key=os.environ['EMERGENT_LLM_KEY'],
+            session_id=input.conversation_id,
+            system_message="You are a helpful research assistant. Provide detailed, accurate, and well-structured responses to research queries. When appropriate, break down complex topics into understandable sections."
+        )
+        chat.with_model("openai", "gpt-4o")
+        
+        user_msg = UserMessage(text=input.content)
+        ai_response = await chat.send_message(user_msg)
+        
+        ai_message = Message(
+            conversation_id=input.conversation_id,
+            role="assistant",
+            content=ai_response
+        )
+    except Exception as e:
+        logging.error(f"Error calling LLM: {e}")
+        ai_message = Message(
+            conversation_id=input.conversation_id,
+            role="assistant",
+            content=f"I apologize, but I encountered an error processing your request: {str(e)}"
+        )
+    
+    ai_doc = ai_message.model_dump()
+    ai_doc['timestamp'] = ai_doc['timestamp'].isoformat()
+    await db.messages.insert_one(ai_doc)
+    
+    await db.conversations.update_one(
+        {"id": input.conversation_id},
+        {"$set": {"updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    
+    return MessageResponse(user_message=user_message, ai_message=ai_message)
+
 app.include_router(api_router)
 
 app.add_middleware(
@@ -77,7 +148,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
