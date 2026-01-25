@@ -1,4 +1,3 @@
-import "@/App.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import ChatPage from "@/pages/ChatPage";
 import { Toaster } from "@/components/ui/sonner";

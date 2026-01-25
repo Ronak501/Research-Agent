@@ -66,7 +66,6 @@ research-chatbot/
    MONGO_URL=mongodb://localhost:27017
    DB_NAME=test_database
    CORS_ORIGINS=http://localhost:3000
-   EMERGENT_LLM_KEY=your_api_key_here
    ```
 
 5. **Start MongoDB**
@@ -134,7 +133,7 @@ React Component (ChatPage)
     ↓ axios.post()
 FastAPI Endpoint (/api/chat/message)
     ↓
-LLM Integration (Emergent AI)
+LLM Integration (GEMINI AI)
     ↓
 MongoDB Storage
     ↓
@@ -260,7 +259,7 @@ yarn build
 MONGO_URL=mongodb://localhost:27017
 DB_NAME=test_database
 CORS_ORIGINS=http://localhost:3000
-EMERGENT_LLM_KEY=your_api_key_here
+GEMINI_LLM_KEY=your_api_key_here
 ```
 
 ### Frontend (.env)
@@ -301,7 +300,7 @@ The project includes complete Docker setup:
    ```
 
 3. **API key issues**
-   - Ensure `EMERGENT_LLM_KEY` is set in backend/.env
+   - Ensure `GEMINI_KEY` is set in backend/.env
    - Verify the API key is valid
 
 4. **CORS issues**

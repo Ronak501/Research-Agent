@@ -28,6 +28,7 @@ export default function ChatPage() {
   const loadConversations = async () => {
     try {
       const response = await axios.get(`${API}/chat/conversations`);
+      console.log("Conversations loaded:", response.data);
       setConversations(response.data);
     } catch (error) {
       console.error("Error loading conversations:", error);
