@@ -14,6 +14,8 @@ services:
       - mongodb_data:/data/db
     networks:
       - app-network
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
 
   # Backend API
   backend:
@@ -28,13 +30,16 @@ services:
       - MONGO_URL=mongodb://mongodb:27017
       - DB_NAME=test_database
       - CORS_ORIGINS=http://localhost:3000
-      - EMERGENT_LLM_KEY=sk-emergent-a933270937110138e6
+      - GEMINI_API_KEY=AIzaSyDvVaxQuHdzaKNR1JvfVC2T7h6awrye0Wo
+      - GEMINI_API=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
     depends_on:
       - mongodb
     volumes:
       - ./backend:/app
     networks:
       - app-network
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
 
   # Frontend React App
   frontend:
@@ -54,6 +59,23 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    networks:
+      - app-network
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # Watchtower for auto-updates
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=300  # Check every 5 minutes
+      - WATCHTOWER_LABEL_ENABLE=true  # Only update containers with labels
+      - WATCHTOWER_INCLUDE_RESTARTING=true
     networks:
       - app-network
 

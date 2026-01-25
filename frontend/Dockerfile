@@ -2,16 +2,16 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Copy package files
+# 1️⃣ Copy ONLY dependency files first
 COPY package.json yarn.lock ./
 
-# Install dependencies
-RUN yarn install
+# 2️⃣ Install deps (cached unless package.json/yarn.lock changes)
+RUN yarn install --frozen-lockfile
 
-# Copy rest of the app
+# 3️⃣ Copy rest of the app
 COPY . .
 
-# Build frontend
+# 4️⃣ Build the app
 RUN yarn build
 
 EXPOSE 3000
