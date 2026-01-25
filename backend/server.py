@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 import uuid
 from datetime import datetime, timezone
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from ai.gemini_client import generate_ai_response
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -104,28 +104,22 @@ async def send_message(input: MessageCreate):
     await db.messages.insert_one(user_doc)
     
     try:
-        chat = LlmChat(
-            api_key=os.environ['EMERGENT_LLM_KEY'],
-            session_id=input.conversation_id,
-            system_message="You are a helpful research assistant. Provide detailed, accurate, and well-structured responses to research queries. When appropriate, break down complex topics into understandable sections."
-        )
-        chat.with_model("openai", "gpt-4o")
-        
-        user_msg = UserMessage(text=input.content)
-        ai_response = await chat.send_message(user_msg)
-        
-        ai_message = Message(
-            conversation_id=input.conversation_id,
-            role="assistant",
-            content=ai_response
-        )
+    ai_response = generate_ai_response(input.content)
+
+    ai_message = Message(
+        conversation_id=input.conversation_id,
+        role="assistant",
+        content=ai_response
+    )
+
     except Exception as e:
-        logging.error(f"Error calling LLM: {e}")
+        logging.error(f"Gemini error: {e}")
         ai_message = Message(
             conversation_id=input.conversation_id,
             role="assistant",
-            content=f"I apologize, but I encountered an error processing your request: {str(e)}"
+            content="I encountered an error while generating a response. Please try again."
         )
+
     
     ai_doc = ai_message.model_dump()
     ai_doc['timestamp'] = ai_doc['timestamp'].isoformat()
